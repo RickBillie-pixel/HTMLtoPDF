@@ -1,0 +1,12 @@
+# render.yaml (voor Render deployment)
+services:
+  - type: web
+    name: html-to-pdf-api
+    env: docker
+    plan: free
+    envVars:
+      - key: GOTENBERG_URL
+        value: http://localhost:3000
+      - key: BASE_URL
+        sync: false
+    healthCheckPath: /
