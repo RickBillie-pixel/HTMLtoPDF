@@ -1,112 +1,190 @@
-# main.py
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
-from pydantic import BaseModel
-import httpx
-import uuid
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from playwright.async_api import async_playwright
 import os
+import base64
 from pathlib import Path
+import logging
 
-app = FastAPI(title="HTML to PDF Converter")
+# Logging configuratie
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Directory voor tijdelijke PDF opslag
-PDF_DIR = Path("generated_pdfs")
-PDF_DIR.mkdir(exist_ok=True)
+app = FastAPI(
+    title="HTML to PDF Converter",
+    description="Convert HTML to PDF with full CSS support using Chromium",
+    version="1.0.0"
+)
 
-# Gotenberg URL (draait in dezelfde container of via docker-compose)
-GOTENBERG_URL = os.getenv("GOTENBERG_URL", "http://localhost:3000")
+# CORS configuratie voor n8n
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class HTMLRequest(BaseModel):
-    html: str
-    filename: str = "document.pdf"
+# Output directory aanmaken
+OUTPUT_DIR = Path("/app/static/output")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Statische files hosten
+app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
+
+
+class ConversionRequest(BaseModel):
+    html: str = Field(..., description="Volledige HTML string om te converteren")
+    filename: str = Field(..., description="Naam van het PDF bestand (bijv. cv_1234.pdf)")
+    return_base64: bool = Field(False, description="Optioneel: return PDF als base64 string")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "html": "<!DOCTYPE html><html><head><style>@page { margin: 2cm; }</style></head><body><h1>Test PDF</h1></body></html>",
+                "filename": "test.pdf",
+                "return_base64": False
+            }
+        }
+
+
+class ConversionResponse(BaseModel):
+    url: str = Field(..., description="URL naar het gegenereerde PDF bestand")
+    base64: str | None = Field(None, description="Base64 encoded PDF (indien gevraagd)")
+    size_kb: float = Field(..., description="Bestandsgrootte in KB")
+
 
 @app.get("/")
-def read_root():
-    return {"message": "HTML to PDF Converter API", "status": "running"}
+async def root():
+    """Health check endpoint"""
+    return {
+        "status": "online",
+        "service": "HTML to PDF Converter",
+        "version": "1.0.0"
+    }
 
-@app.post("/convert")
-async def convert_html_to_pdf(request: HTMLRequest):
+
+@app.get("/health")
+async def health():
+    """Health check voor Render"""
+    return {"status": "healthy"}
+
+
+@app.post("/convert", response_model=ConversionResponse)
+async def convert_html_to_pdf(request: ConversionRequest):
     """
-    Converteer HTML naar PDF en geef download URL terug
+    Converteer HTML naar PDF met volledige CSS ondersteuning
+    
+    - Ondersteunt alle moderne CSS: @page, running(header), string-set, flexbox, font-face, etc.
+    - Gebruikt Chromium print rendering voor perfecte output
+    - UTF-8 encoding voor correcte karakters
+    - Custom marges en A4 formaat
     """
     try:
-        # Genereer unieke filename
-        pdf_id = str(uuid.uuid4())
-        pdf_filename = f"{pdf_id}.pdf"
-        pdf_path = PDF_DIR / pdf_filename
+        # Valideer filename
+        if not request.filename.endswith('.pdf'):
+            request.filename += '.pdf'
         
-        # Stuur HTML naar Gotenberg
-        files = {
-            'files': ('index.html', request.html.encode('utf-8'), 'text/html')
+        # Sanitize filename
+        safe_filename = "".join(c for c in request.filename if c.isalnum() or c in ('_', '-', '.'))
+        output_path = OUTPUT_DIR / safe_filename
+        
+        logger.info(f"Starting conversion for: {safe_filename}")
+        
+        # Playwright initialiseren
+        async with async_playwright() as p:
+            # Launch Chromium browser
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-extensions'
+                ]
+            )
+            
+            try:
+                # Nieuwe pagina aanmaken
+                page = await browser.new_page()
+                
+                # HTML content laden met UTF-8 encoding
+                await page.set_content(
+                    request.html,
+                    wait_until='networkidle',
+                    timeout=30000
+                )
+                
+                # PDF genereren met volledige CSS ondersteuning
+                pdf_bytes = await page.pdf(
+                    path=str(output_path),
+                    format='A4',
+                    print_background=True,
+                    prefer_css_page_size=True,  # Respecteer @page CSS
+                    margin={
+                        'top': '2cm',
+                        'bottom': '2cm',
+                        'left': '1.5cm',
+                        'right': '1.5cm'
+                    },
+                    display_header_footer=False,
+                    # Gebruik print media queries
+                    # Dit wordt automatisch gedaan door page.pdf()
+                )
+                
+                logger.info(f"PDF successfully generated: {safe_filename}")
+                
+            finally:
+                await browser.close()
+        
+        # Bestandsgrootte bepalen
+        file_size = output_path.stat().st_size / 1024  # in KB
+        
+        # Base URL bepalen (Render.com)
+        base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
+        pdf_url = f"{base_url}/output/{safe_filename}"
+        
+        response_data = {
+            "url": pdf_url,
+            "size_kb": round(file_size, 2)
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{GOTENBERG_URL}/forms/chromium/convert/html",
-                files=files,
-                data={
-                    'marginTop': '0',
-                    'marginBottom': '0',
-                    'marginLeft': '0',
-                    'marginRight': '0',
-                    'printBackground': 'true',
-                }
-            )
+        # Optioneel: base64 encoding
+        if request.return_base64:
+            with open(output_path, 'rb') as f:
+                pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
+                response_data["base64"] = pdf_base64
         
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=500,
-                detail=f"PDF generatie gefaald: {response.text}"
-            )
+        return JSONResponse(content=response_data)
         
-        # Sla PDF op
-        with open(pdf_path, 'wb') as f:
-            f.write(response.content)
-        
-        # Genereer download URL
-        base_url = os.getenv("BASE_URL", "http://localhost:8000")
-        download_url = f"{base_url}/download/{pdf_filename}"
-        
-        return JSONResponse({
-            "success": True,
-            "pdf_id": pdf_id,
-            "download_url": download_url,
-            "filename": request.filename
-        })
-        
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="PDF generatie timeout")
+    except Exception as e:
+        logger.error(f"Conversion error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fout bij het converteren van HTML naar PDF: {str(e)}"
+        )
+
+
+@app.delete("/output/{filename}")
+async def delete_pdf(filename: str):
+    """Verwijder een gegenereerd PDF bestand"""
+    try:
+        file_path = OUTPUT_DIR / filename
+        if file_path.exists():
+            file_path.unlink()
+            return {"message": f"Bestand {filename} succesvol verwijderd"}
+        else:
+            raise HTTPException(status_code=404, detail="Bestand niet gevonden")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/download/{pdf_filename}")
-async def download_pdf(pdf_filename: str):
-    """
-    Download gegenereerde PDF
-    """
-    pdf_path = PDF_DIR / pdf_filename
-    
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF niet gevonden")
-    
-    return FileResponse(
-        path=pdf_path,
-        media_type="application/pdf",
-        filename=pdf_filename
-    )
-
-@app.delete("/cleanup/{pdf_filename}")
-async def cleanup_pdf(pdf_filename: str):
-    """
-    Verwijder PDF na download (optioneel)
-    """
-    pdf_path = PDF_DIR / pdf_filename
-    
-    if pdf_path.exists():
-        pdf_path.unlink()
-        return {"success": True, "message": "PDF verwijderd"}
-    
-    raise HTTPException(status_code=404, detail="PDF niet gevonden")
 
 if __name__ == "__main__":
     import uvicorn
