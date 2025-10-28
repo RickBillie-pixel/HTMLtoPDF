@@ -160,8 +160,8 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     margin={
                         'top': '5.8cm',    # Ruimte voor YER header afbeelding
                         'bottom': '2.0cm',  # Normale bottom marge (geen footer meer)
-                        'left': '2.3cm',    # Text marge links
-                        'right': '2.3cm'    # Text marge rechts
+                        'left': '1.5cm',    # Text marge links
+                        'right': '1.5cm'    # Text marge rechts
                     },
                     
                     # Native header/footer (herhaalt automatisch op elke pagina)
