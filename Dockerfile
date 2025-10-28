@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-bookworm
 
 # Werk directory
 WORKDIR /app
@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     fonts-dejavu-core \
     fonts-freefont-ttf \
-    fonts-liberation \
     fonts-noto-color-emoji \
     fonts-noto-cjk \
+    fonts-unifont \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -36,6 +36,10 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxrandr2 \
     libxshmfence1 \
+    libxkbcommon0 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,9 +47,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright Chromium installeren
-RUN playwright install chromium
-RUN playwright install-deps chromium
+# Playwright Chromium installeren (zonder install-deps, want we hebben alles al)
+RUN playwright install chromium --with-deps
 
 # Applicatie code
 COPY main.py .
