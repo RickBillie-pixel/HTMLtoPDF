@@ -169,22 +169,50 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     
                     # Header template: YER afbeelding (base64 embedded)
                     header_template=f"""
-                        <div style='width:100%;margin:0;padding:0;font-size:0;line-height:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;'>
-                            <img src='{header_image_base64}'
-                                 style='display:block;width:100%;height:auto;margin:0;padding:0;border:0;'>
-                        </div>
+                        <html>
+                        <head>
+                            <style>
+                                * {{ margin: 0 !important; padding: 0 !important; }}
+                                body {{ margin: 0 !important; padding: 0 !important; }}
+                                div {{ margin: 0 !important; padding: 0 !important; line-height: 0 !important; }}
+                                img {{ display: block !important; width: 100% !important; height: auto !important; 
+                                       margin: 0 !important; padding: 0 !important; border: 0 !important; 
+                                       vertical-align: top !important; }}
+                            </style>
+                        </head>
+                        <body style='margin:0!important;padding:0!important;'>
+                            <div style='width:100%;margin:0!important;padding:0!important;font-size:0;line-height:0;
+                                        -webkit-print-color-adjust:exact;print-color-adjust:exact;'>
+                                <img src='{header_image_base64}'
+                                     style='display:block!important;width:100%!important;height:auto!important;
+                                            margin:0!important;padding:0!important;border:0!important;
+                                            vertical-align:top!important;'>
+                            </div>
+                        </body>
+                        </html>
                     """,
                     
                     # Footer template: YER disclaimer
                     footer_template="""
-                        <div style='width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;'>
-                            <div style='width:100%;border-top:1px solid #000;
-                                        font-size:9pt;line-height:14pt;
-                                        text-align:center;padding-top:6px;
-                                        font-family:Calibri,Arial,sans-serif;'>
-                                Algemene Werving & Selectie Voorwaarden van YER Nederland B.V. zijn van toepassing.
+                        <html>
+                        <head>
+                            <style>
+                                * { margin: 0 !important; padding: 0 !important; }
+                                body { margin: 0 !important; padding: 0 !important; }
+                            </style>
+                        </head>
+                        <body style='margin:0!important;padding:0!important;'>
+                            <div style='width:100%;margin:0!important;padding:0!important;
+                                        -webkit-print-color-adjust:exact;print-color-adjust:exact;'>
+                                <div style='width:100%;border-top:1px solid #000;
+                                            font-size:9pt;line-height:14pt;
+                                            text-align:center;padding-top:6px!important;
+                                            font-family:Calibri,Arial,sans-serif;'>
+                                    Algemene Werving & Selectie Voorwaarden van YER Nederland B.V. zijn van toepassing.
+                                </div>
                             </div>
-                        </div>
+                        </body>
+                        </html>
                     """,
                 )
                 
