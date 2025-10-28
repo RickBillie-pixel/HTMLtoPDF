@@ -1,39 +1,64 @@
-# Dockerfile
 FROM python:3.11-slim
 
-# Installeer Gotenberg dependencies
+# Werk directory
+WORKDIR /app
+
+# Systeem dependencies voor Playwright en Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
+    ca-certificates \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    fonts-noto-cjk \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libxshmfence1 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# Download en installeer Gotenberg
-RUN wget https://github.com/gotenberg/gotenberg/releases/download/v7.10.1/gotenberg_7.10.1_linux_amd64.deb \
-    && dpkg -i gotenberg_7.10.1_linux_amd64.deb \
-    && rm gotenberg_7.10.1_linux_amd64.deb
-
-# Werkdirectory
-WORKDIR /app
-
-# Kopieer requirements en installeer
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Kopieer applicatie code
+# Playwright Chromium installeren
+RUN playwright install chromium
+RUN playwright install-deps chromium
+
+# Applicatie code
 COPY main.py .
 
-# Maak directory voor PDFs
-RUN mkdir -p generated_pdfs
+# Output directory aanmaken
+RUN mkdir -p /app/static/output
 
-# Start script maken
-RUN echo '#!/bin/bash\n\
-gotenberg --api-port=3000 &\n\
-sleep 3\n\
-uvicorn main:app --host 0.0.0.0 --port 8000' > /start.sh && \
-chmod +x /start.sh
-
-# Expose ports
+# Port expose
 EXPOSE 8000
 
-# Start beide services
-CMD ["/start.sh"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+# Start command
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
