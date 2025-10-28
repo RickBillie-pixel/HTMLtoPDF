@@ -76,12 +76,13 @@ async def health():
 @app.post("/convert", response_model=ConversionResponse)
 async def convert_html_to_pdf(request: ConversionRequest):
     """
-    Converteer HTML naar PDF met volledige CSS ondersteuning
+    Converteer HTML naar PDF met automatische YER header/footer
     
-    - Ondersteunt alle moderne CSS: @page, running(header), string-set, flexbox, font-face, etc.
-    - Gebruikt Chromium print rendering voor perfecte output
-    - UTF-8 encoding voor correcte karakters
-    - Custom marges en A4 formaat
+    - Header en footer worden automatisch toegevoegd via Playwright
+    - Header bevat YER afbeelding (wordt herhaald op elke pagina)
+    - Footer bevat disclaimer (wordt herhaald op elke pagina)
+    - Marges zorgen dat tekst nooit overlapt met header/footer
+    - Page-break-inside: avoid werkt nu correct
     """
     try:
         # Valideer filename
@@ -122,20 +123,44 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     timeout=30000
                 )
                 
-                # PDF genereren met volledige CSS ondersteuning
-                # KRITIEK: Marges op 0 zodat HTML @page CSS gevolgd wordt
+                # PDF genereren met Playwright's native header/footer
+                # Dit zorgt ervoor dat Chromium exact weet waar content mag komen
                 pdf_bytes = await page.pdf(
                     path=str(output_path),
                     format='A4',
                     print_background=True,
-                    prefer_css_page_size=True,
+                    prefer_css_page_size=False,  # Gebruik Playwright margins, niet @page
+                    
+                    # Marges: header en footer ruimte
                     margin={
-                        'top': '0',
-                        'bottom': '0',
-                        'left': '0',
-                        'right': '0'
+                        'top': '5.8cm',    # Ruimte voor YER header afbeelding
+                        'bottom': '2.6cm',  # Ruimte voor footer tekst
+                        'left': '2.3cm',    # Text marge links
+                        'right': '2.3cm'    # Text marge rechts
                     },
-                    display_header_footer=False,
+                    
+                    # Native header/footer (herhaalt automatisch op elke pagina)
+                    display_header_footer=True,
+                    
+                    # Header template: YER afbeelding
+                    header_template="""
+                        <div style='width:100%;margin:0;padding:0;font-size:0;line-height:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;'>
+                            <img src='https://vgbrkidescjeduhwhqho.supabase.co/storage/v1/object/public/cv-generated/yer-afbeelding.jpg'
+                                 style='display:block;width:100%;height:auto;margin:0;padding:0;border:0;'>
+                        </div>
+                    """,
+                    
+                    # Footer template: YER disclaimer
+                    footer_template="""
+                        <div style='width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;'>
+                            <div style='width:100%;border-top:1px solid #000;
+                                        font-size:9pt;line-height:14pt;
+                                        text-align:center;padding-top:6px;
+                                        font-family:Calibri,Arial,sans-serif;'>
+                                Algemene Werving & Selectie Voorwaarden van YER Nederland B.V. zijn van toepassing.
+                            </div>
+                        </div>
+                    """,
                 )
                 
                 logger.info(f"PDF successfully generated: {safe_filename}")
