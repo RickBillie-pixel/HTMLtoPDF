@@ -122,21 +122,23 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     timeout=30000
                 )
                 
+                # KRITIEK: Wacht even extra voor rendering
+                await page.wait_for_timeout(500)
+                
                 # PDF genereren met volledige CSS ondersteuning
+                # GEEN marges instellen - laat de HTML @page CSS dit regelen
                 pdf_bytes = await page.pdf(
                     path=str(output_path),
                     format='A4',
                     print_background=True,
-                    prefer_css_page_size=True,  # Respecteer @page CSS
+                    prefer_css_page_size=True,  # KRITIEK: Respecteer @page CSS volledig
                     margin={
-                        'top': '2cm',
-                        'bottom': '2cm',
-                        'left': '1.5cm',
-                        'right': '1.5cm'
+                        'top': '0',      # Geen marges - HTML regelt dit met fixed header
+                        'bottom': '0',   # Geen marges - HTML regelt dit met fixed footer
+                        'left': '0',     # Geen marges - HTML regelt padding
+                        'right': '0'     # Geen marges - HTML regelt padding
                     },
-                    display_header_footer=False,
-                    # Gebruik print media queries
-                    # Dit wordt automatisch gedaan door page.pdf()
+                    display_header_footer=False,  # Gebruik HTML fixed elements
                 )
                 
                 logger.info(f"PDF successfully generated: {safe_filename}")
