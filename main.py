@@ -8,6 +8,7 @@ import os
 import base64
 from pathlib import Path
 import logging
+import httpx  # Voor het downloaden van de header afbeelding
 
 # Logging configuratie
 logging.basicConfig(level=logging.INFO)
@@ -73,6 +74,27 @@ async def health():
     return {"status": "healthy"}
 
 
+async def get_yer_header_base64():
+    """
+    Download YER header afbeelding en converteer naar base64
+    Dit is nodig omdat Playwright's header_template geen externe URLs ondersteunt
+    """
+    url = "https://vgbrkidescjeduhwhqho.supabase.co/storage/v1/object/public/cv-generated/yer-afbeelding.jpg"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()
+            
+            # Converteer naar base64
+            image_base64 = base64.b64encode(response.content).decode('utf-8')
+            return f"data:image/jpeg;base64,{image_base64}"
+    except Exception as e:
+        logger.error(f"Failed to download YER header image: {str(e)}")
+        # Return een placeholder bij failure
+        return ""
+
+
 @app.post("/convert", response_model=ConversionResponse)
 async def convert_html_to_pdf(request: ConversionRequest):
     """
@@ -94,6 +116,9 @@ async def convert_html_to_pdf(request: ConversionRequest):
         output_path = OUTPUT_DIR / safe_filename
         
         logger.info(f"Starting conversion for: {safe_filename}")
+        
+        # Download YER header afbeelding en converteer naar base64
+        header_image_base64 = await get_yer_header_base64()
         
         # Playwright initialiseren
         async with async_playwright() as p:
@@ -142,10 +167,10 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     # Native header/footer (herhaalt automatisch op elke pagina)
                     display_header_footer=True,
                     
-                    # Header template: YER afbeelding
-                    header_template="""
+                    # Header template: YER afbeelding (base64 embedded)
+                    header_template=f"""
                         <div style='width:100%;margin:0;padding:0;font-size:0;line-height:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;'>
-                            <img src='https://vgbrkidescjeduhwhqho.supabase.co/storage/v1/object/public/cv-generated/yer-afbeelding.jpg'
+                            <img src='{header_image_base64}'
                                  style='display:block;width:100%;height:auto;margin:0;padding:0;border:0;'>
                         </div>
                     """,
