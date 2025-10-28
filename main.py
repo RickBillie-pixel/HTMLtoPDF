@@ -159,7 +159,7 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     # Marges: header en footer ruimte
                     margin={
                         'top': '5.8cm',    # Ruimte voor YER header afbeelding
-                        'bottom': '2.6cm',  # Ruimte voor footer tekst
+                        'bottom': '3.0cm',  # Ruimte voor footer tekst (vergroot voor volledige footer)
                         'left': '2.3cm',    # Text marge links
                         'right': '2.3cm'    # Text marge rechts
                     },
@@ -197,16 +197,16 @@ async def convert_html_to_pdf(request: ConversionRequest):
                         <html>
                         <head>
                             <style>
-                                * { margin: 0 !important; padding: 0 !important; }
-                                body { margin: 0 !important; padding: 0 !important; }
+                                * { margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; }
+                                body { margin: 0 !important; padding: 0 !important; height: 100% !important; }
                             </style>
                         </head>
-                        <body style='margin:0!important;padding:0!important;'>
-                            <div style='width:100%;margin:0!important;padding:0!important;
+                        <body style='margin:0!important;padding:0!important;height:100%!important;display:flex!important;align-items:center!important;'>
+                            <div style='width:100%;margin:0!important;padding:8px 0 0 0!important;
                                         -webkit-print-color-adjust:exact;print-color-adjust:exact;'>
                                 <div style='width:100%;border-top:1px solid #000;
-                                            font-size:9pt;line-height:14pt;
-                                            text-align:center;padding-top:6px!important;
+                                            font-size:9pt;line-height:16pt;
+                                            text-align:center;padding-top:8px!important;
                                             font-family:Calibri,Arial,sans-serif;'>
                                     Algemene Werving & Selectie Voorwaarden van YER Nederland B.V. zijn van toepassing.
                                 </div>
