@@ -1,23 +1,27 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from playwright.async_api import async_playwright
+from pdf2docx import Converter
 import os
 import base64
 from pathlib import Path
 import logging
-import httpx  # Voor het downloaden van de header afbeelding
+import httpx
+import tempfile
+import asyncio
+from typing import Optional
 
 # Logging configuratie
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="HTML to PDF Converter",
-    description="Convert HTML to PDF with full CSS support using Chromium",
-    version="1.0.0"
+    title="HTML to PDF & PDF to Word Converter",
+    description="Convert HTML to PDF and PDF to Word with full CSS support using Chromium",
+    version="2.0.0"
 )
 
 # CORS configuratie voor n8n
@@ -29,12 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Output directory aanmaken
+# Output directories aanmaken
 OUTPUT_DIR = Path("/app/static/output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+WORD_OUTPUT_DIR = Path("/app/static/word_output")
+WORD_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 # Statische files hosten
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
+app.mount("/word_output", StaticFiles(directory=str(WORD_OUTPUT_DIR)), name="word_output")
 
 
 class ConversionRequest(BaseModel):
@@ -52,9 +60,25 @@ class ConversionRequest(BaseModel):
         }
 
 
+class PDFToWordRequest(BaseModel):
+    pdf_base64: Optional[str] = Field(None, description="PDF bestand als base64 string")
+    pdf_url: Optional[str] = Field(None, description="URL naar PDF bestand om te downloaden")
+    filename: str = Field(..., description="Naam van het output Word bestand (bijv. cv_1234.docx)")
+    return_base64: bool = Field(False, description="Optioneel: return Word als base64 string")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pdf_url": "https://example.com/document.pdf",
+                "filename": "converted_document.docx",
+                "return_base64": False
+            }
+        }
+
+
 class ConversionResponse(BaseModel):
-    url: str = Field(..., description="URL naar het gegenereerde PDF bestand")
-    base64: str | None = Field(None, description="Base64 encoded PDF (indien gevraagd)")
+    url: str = Field(..., description="URL naar het gegenereerde bestand")
+    base64: str | None = Field(None, description="Base64 encoded bestand (indien gevraagd)")
     size_kb: float = Field(..., description="Bestandsgrootte in KB")
 
 
@@ -63,8 +87,13 @@ async def root():
     """Health check endpoint"""
     return {
         "status": "online",
-        "service": "HTML to PDF Converter",
-        "version": "1.0.0"
+        "service": "HTML to PDF & PDF to Word Converter",
+        "version": "2.0.0",
+        "endpoints": {
+            "html_to_pdf": "/convert",
+            "pdf_to_word": "/convert-pdf-to-word",
+            "pdf_to_word_upload": "/convert-pdf-to-word-upload"
+        }
     }
 
 
@@ -229,11 +258,210 @@ async def convert_html_to_pdf(request: ConversionRequest):
         )
 
 
+async def pdf_to_word_conversion(pdf_path: Path, output_path: Path) -> None:
+    """
+    Voer de daadwerkelijke PDF naar Word conversie uit in een thread pool
+    omdat pdf2docx geen async ondersteunt
+    """
+    def convert_sync():
+        cv = Converter(str(pdf_path))
+        cv.convert(str(output_path))
+        cv.close()
+    
+    # Run in thread pool om blocking IO te vermijden
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, convert_sync)
+
+
+@app.post("/convert-pdf-to-word", response_model=ConversionResponse)
+async def convert_pdf_to_word(request: PDFToWordRequest):
+    """
+    Converteer PDF naar Word (DOCX) formaat
+    
+    Accepteert:
+    - pdf_base64: PDF als base64 string
+    - pdf_url: URL naar een PDF bestand
+    
+    Returns:
+    - URL naar het gegenereerde Word bestand
+    - Optioneel: base64 encoded Word bestand
+    """
+    try:
+        # Valideer dat er tenminste één input methode is
+        if not request.pdf_base64 and not request.pdf_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Geef een pdf_base64 of pdf_url op"
+            )
+        
+        # Valideer filename
+        if not request.filename.endswith('.docx'):
+            request.filename += '.docx'
+        
+        # Sanitize filename
+        safe_filename = "".join(c for c in request.filename if c.isalnum() or c in ('_', '-', '.'))
+        output_path = WORD_OUTPUT_DIR / safe_filename
+        
+        logger.info(f"Starting PDF to Word conversion for: {safe_filename}")
+        
+        # Tijdelijk PDF bestand aanmaken
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+            tmp_pdf_path = Path(tmp_pdf.name)
+            
+            try:
+                # PDF data ophalen (base64 of URL)
+                if request.pdf_base64:
+                    # Decode base64
+                    pdf_data = base64.b64decode(request.pdf_base64)
+                    tmp_pdf.write(pdf_data)
+                    logger.info("PDF loaded from base64")
+                    
+                elif request.pdf_url:
+                    # Download PDF van URL
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(request.pdf_url, timeout=30.0)
+                        response.raise_for_status()
+                        tmp_pdf.write(response.content)
+                        logger.info(f"PDF downloaded from URL: {request.pdf_url}")
+                
+                tmp_pdf.flush()
+                
+                # Converteer PDF naar Word
+                await pdf_to_word_conversion(tmp_pdf_path, output_path)
+                
+                logger.info(f"Word document successfully generated: {safe_filename}")
+                
+            finally:
+                # Cleanup tijdelijk PDF bestand
+                if tmp_pdf_path.exists():
+                    tmp_pdf_path.unlink()
+        
+        # Bestandsgrootte bepalen
+        file_size = output_path.stat().st_size / 1024  # in KB
+        
+        # Base URL bepalen (Render.com)
+        base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
+        word_url = f"{base_url}/word_output/{safe_filename}"
+        
+        response_data = {
+            "url": word_url,
+            "size_kb": round(file_size, 2)
+        }
+        
+        # Optioneel: base64 encoding
+        if request.return_base64:
+            with open(output_path, 'rb') as f:
+                word_base64 = base64.b64encode(f.read()).decode('utf-8')
+                response_data["base64"] = word_base64
+        
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF to Word conversion error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fout bij het converteren van PDF naar Word: {str(e)}"
+        )
+
+
+@app.post("/convert-pdf-to-word-upload", response_model=ConversionResponse)
+async def convert_pdf_to_word_upload(
+    file: UploadFile = File(..., description="PDF bestand om te uploaden"),
+    return_base64: bool = False
+):
+    """
+    Converteer PDF naar Word via file upload
+    
+    Upload een PDF bestand en krijg een Word document terug
+    """
+    try:
+        # Valideer dat het een PDF is
+        if not file.filename.endswith('.pdf'):
+            raise HTTPException(
+                status_code=400,
+                detail="Alleen PDF bestanden zijn toegestaan"
+            )
+        
+        # Generate output filename
+        base_name = file.filename.rsplit('.', 1)[0]
+        safe_filename = "".join(c for c in base_name if c.isalnum() or c in ('_', '-')) + '.docx'
+        output_path = WORD_OUTPUT_DIR / safe_filename
+        
+        logger.info(f"Starting PDF to Word conversion via upload: {file.filename} -> {safe_filename}")
+        
+        # Tijdelijk PDF bestand aanmaken
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+            tmp_pdf_path = Path(tmp_pdf.name)
+            
+            try:
+                # Upload opslaan
+                content = await file.read()
+                tmp_pdf.write(content)
+                tmp_pdf.flush()
+                
+                logger.info(f"Uploaded PDF size: {len(content) / 1024:.2f} KB")
+                
+                # Converteer PDF naar Word
+                await pdf_to_word_conversion(tmp_pdf_path, output_path)
+                
+                logger.info(f"Word document successfully generated: {safe_filename}")
+                
+            finally:
+                # Cleanup tijdelijk PDF bestand
+                if tmp_pdf_path.exists():
+                    tmp_pdf_path.unlink()
+        
+        # Bestandsgrootte bepalen
+        file_size = output_path.stat().st_size / 1024  # in KB
+        
+        # Base URL bepalen (Render.com)
+        base_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
+        word_url = f"{base_url}/word_output/{safe_filename}"
+        
+        response_data = {
+            "url": word_url,
+            "size_kb": round(file_size, 2)
+        }
+        
+        # Optioneel: base64 encoding
+        if return_base64:
+            with open(output_path, 'rb') as f:
+                word_base64 = base64.b64encode(f.read()).decode('utf-8')
+                response_data["base64"] = word_base64
+        
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF to Word upload conversion error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fout bij het converteren van PDF naar Word: {str(e)}"
+        )
+
+
 @app.delete("/output/{filename}")
 async def delete_pdf(filename: str):
     """Verwijder een gegenereerd PDF bestand"""
     try:
         file_path = OUTPUT_DIR / filename
+        if file_path.exists():
+            file_path.unlink()
+            return {"message": f"Bestand {filename} succesvol verwijderd"}
+        else:
+            raise HTTPException(status_code=404, detail="Bestand niet gevonden")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/word_output/{filename}")
+async def delete_word(filename: str):
+    """Verwijder een gegenereerd Word bestand"""
+    try:
+        file_path = WORD_OUTPUT_DIR / filename
         if file_path.exists():
             file_path.unlink()
             return {"message": f"Bestand {filename} succesvol verwijderd"}
