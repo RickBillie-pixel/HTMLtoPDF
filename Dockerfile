@@ -47,8 +47,13 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright Chromium installeren (zonder install-deps, want we hebben alles al)
-RUN playwright install chromium --with-deps
+# Playwright system dependencies installeren
+RUN playwright install-deps chromium
+
+# Chromium browser downloaden en installeren
+# Skip tijdens build en installeer bij eerste run
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN playwright install chromium
 
 # Applicatie code
 COPY main.py .
