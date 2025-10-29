@@ -53,8 +53,9 @@ RUN playwright install chromium --with-deps
 # Applicatie code
 COPY main.py .
 
-# Output directory aanmaken
+# Output directories aanmaken
 RUN mkdir -p /app/static/output
+RUN mkdir -p /app/static/word_output
 
 # Port expose
 EXPOSE 8000
