@@ -264,9 +264,23 @@ async def pdf_to_word_conversion(pdf_path: Path, output_path: Path) -> None:
     omdat pdf2docx geen async ondersteunt
     """
     def convert_sync():
-        cv = Converter(str(pdf_path))
-        cv.convert(str(output_path))
-        cv.close()
+        try:
+            cv = Converter(str(pdf_path))
+            cv.convert(str(output_path))
+            cv.close()
+        except AttributeError as e:
+            # Fallback: als pdf2docx faalt, probeer een basic conversie
+            if "'Rect' object has no attribute" in str(e):
+                logger.warning(f"pdf2docx Rect error, trying alternative method: {e}")
+                # Probeer met aangepaste settings
+                cv = Converter(str(pdf_path))
+                cv.convert(str(output_path), start=0, end=None)
+                cv.close()
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"PDF conversion failed: {str(e)}")
+            raise
     
     # Run in thread pool om blocking IO te vermijden
     loop = asyncio.get_event_loop()
