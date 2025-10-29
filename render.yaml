@@ -16,11 +16,14 @@ services:
         sync: false
         # Dit wordt automatisch ingesteld door Render
       
-    # Disk voor persistent storage van PDFs
-    disk:
-      name: pdf-storage
-      mountPath: /app/static/output
-      sizeGB: 1
+    # Disks voor persistent storage
+    disks:
+      - name: pdf-storage
+        mountPath: /app/static/output
+        sizeGB: 1
+      - name: word-storage
+        mountPath: /app/static/word_output
+        sizeGB: 1
     
     # Auto-deploy bij push
     autoDeploy: true
