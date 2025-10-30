@@ -28,14 +28,9 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libtiff-dev \
     ca-certificates \
-    openssl && \
-    \
-    # ✅ Voeg Microsoft Verdana en andere TrueType fonts toe
-    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ttf-mscorefonts-installer fontconfig && \
+    openssl \
+    fontconfig && \
     fc-cache -f -v && \
-    \
-    # Cleanup
     rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
@@ -47,6 +42,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Verify Playwright is correct geïnstalleerd
 RUN python -c "from playwright.sync_api import sync_playwright; print('Playwright OK')"
+
+# =============================================================================
+# FONTS
+# =============================================================================
+COPY fonts /app/fonts
+RUN chmod -R 755 /app/fonts
 
 # =============================================================================
 # APPLICATIE CODE
@@ -78,3 +79,17 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # START COMMAND
 # =============================================================================
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+```
+
+---
+
+## Projectstructuur
+```
+project/
+├── fonts/
+│   ├── Verdana.ttf
+│   └── Verdana-Bold.ttf
+├── main.py
+├── Dockerfile
+├── requirements.txt
+└── render.yaml
