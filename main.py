@@ -163,12 +163,27 @@ async def convert_html_to_pdf(request: ConversionRequest):
         
         logger.info(f"Starting conversion for: {safe_filename}")
         
+        # DEBUG: Check of fonts geladen zijn
+        logger.info(f"DEBUG - VERDANA_REGULAR length: {len(VERDANA_REGULAR)}")
+        logger.info(f"DEBUG - VERDANA_BOLD length: {len(VERDANA_BOLD)}")
+        
+        # DEBUG: Check of placeholders in HTML zitten
+        has_regular = '{{VERDANA_REGULAR_BASE64}}' in request.html
+        has_bold = '{{VERDANA_BOLD_BASE64}}' in request.html
+        logger.info(f"DEBUG - HTML contains VERDANA_REGULAR placeholder: {has_regular}")
+        logger.info(f"DEBUG - HTML contains VERDANA_BOLD placeholder: {has_bold}")
+        logger.info(f"DEBUG - Incoming HTML length: {len(request.html)}")
+        
         # Inject base64 fonts in HTML
         html_with_fonts = request.html.replace(
             '{{VERDANA_REGULAR_BASE64}}', VERDANA_REGULAR
         ).replace(
             '{{VERDANA_BOLD_BASE64}}', VERDANA_BOLD
         )
+        
+        # DEBUG: Check of replacement werkte
+        logger.info(f"DEBUG - After replacement HTML length: {len(html_with_fonts)}")
+        logger.info(f"DEBUG - Replacement successful: {len(html_with_fonts) > len(request.html)}")
         
         # Download YER header afbeelding en converteer naar base64
         header_image_base64 = await get_yer_header_base64()
