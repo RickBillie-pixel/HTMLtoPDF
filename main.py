@@ -13,6 +13,7 @@ import httpx
 import tempfile
 import asyncio
 import shutil
+import subprocess
 from typing import Optional
 
 # Logging configuratie
@@ -20,34 +21,58 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def setup_fonts():
-    """Copy fonts to /tmp directory for Chromium access"""
+def install_fonts_system_wide():
+    """
+    Install fonts from /app/fonts to system font directory
+    This is CRITICAL for Playwright's Chromium to find them
+    """
     try:
-        # Create temp fonts directory
-        temp_fonts_dir = Path("/tmp/fonts")
-        temp_fonts_dir.mkdir(exist_ok=True)
+        # Create system font directory
+        system_font_dir = Path("/usr/local/share/fonts/truetype/custom")
+        system_font_dir.mkdir(parents=True, exist_ok=True)
         
-        # Copy fonts from /app/fonts to /tmp/fonts
-        source_fonts = [
-            ("/app/fonts/Verdana.ttf", "/tmp/fonts/Verdana.ttf"),
-            ("/app/fonts/Verdana-Bold.ttf", "/tmp/fonts/Verdana-Bold.ttf")
-        ]
+        # Copy fonts from /app/fonts to system directory
+        app_fonts = Path("/app/fonts")
+        if app_fonts.exists():
+            for font_file in app_fonts.glob("*.ttf"):
+                dest = system_font_dir / font_file.name
+                shutil.copy2(font_file, dest)
+                os.chmod(dest, 0o644)
+                logger.info(f"✓ Installed font: {font_file.name}")
         
-        for source, dest in source_fonts:
-            if Path(source).exists():
-                shutil.copy2(source, dest)
-                logger.info(f"Copied font: {source} -> {dest}")
-            else:
-                logger.error(f"Font not found: {source}")
+        # Update font cache - CRITICAL STEP
+        logger.info("Running fc-cache to index fonts...")
+        result = subprocess.run(
+            ["fc-cache", "-f", "-v"],
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"fc-cache output: {result.stdout}")
         
-        return True
+        # Verify fonts are available
+        result = subprocess.run(
+            ["fc-list", ":family=Verdana"],
+            capture_output=True,
+            text=True
+        )
+        if "Verdana" in result.stdout:
+            logger.info("✓✓✓ Verdana successfully installed and indexed!")
+            logger.info(f"Available Verdana fonts:\n{result.stdout}")
+            return True
+        else:
+            logger.error("✗ Verdana not found in font cache!")
+            return False
+            
     except Exception as e:
-        logger.error(f"Failed to setup fonts: {e}")
+        logger.error(f"Failed to install fonts: {e}")
         return False
 
 
-# Setup fonts at startup
-setup_fonts()
+# Install fonts at startup - DO THIS BEFORE ANYTHING ELSE
+logger.info("=" * 60)
+logger.info("INSTALLING FONTS SYSTEM-WIDE")
+logger.info("=" * 60)
+install_fonts_system_wide()
 
 
 app = FastAPI(
@@ -178,15 +203,6 @@ async def convert_html_to_pdf(request: ConversionRequest):
         
         logger.info(f"Starting conversion for: {safe_filename}")
         
-        # Inject font paths in HTML (use file:// URLs to /tmp/fonts)
-        html_with_fonts = request.html.replace(
-            '__VERDANA_REGULAR_BASE64__', 'file:///tmp/fonts/Verdana.ttf'
-        ).replace(
-            '__VERDANA_BOLD_BASE64__', 'file:///tmp/fonts/Verdana-Bold.ttf'
-        )
-        
-        logger.info(f"HTML prepared with font paths")
-        
         # Download YER header afbeelding en converteer naar base64
         header_image_base64 = await get_yer_header_base64()
         
@@ -203,8 +219,7 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     '--no-first-run',
                     '--no-zygote',
                     '--single-process',
-                    '--disable-extensions',
-                    '--font-render-hinting=none'
+                    '--disable-extensions'
                 ]
             )
             
@@ -214,13 +229,10 @@ async def convert_html_to_pdf(request: ConversionRequest):
                 
                 # HTML content laden met UTF-8 encoding
                 await page.set_content(
-                    html_with_fonts,
+                    request.html,
                     wait_until='networkidle',
                     timeout=30000
                 )
-                
-                # Wacht even zodat fonts kunnen laden
-                await page.wait_for_timeout(500)
                 
                 # PDF genereren met Playwright's native header/footer
                 # Dit zorgt ervoor dat Chromium exact weet waar content mag komen
