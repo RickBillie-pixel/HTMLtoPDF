@@ -18,6 +18,23 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def load_font_base64(font_path: str) -> str:
+    """Load font file and return as base64 data URI"""
+    try:
+        with open(font_path, 'rb') as f:
+            font_data = base64.b64encode(f.read()).decode('utf-8')
+            return f"data:font/truetype;charset=utf-8;base64,{font_data}"
+    except Exception as e:
+        logger.error(f"Failed to load font {font_path}: {e}")
+        return ""
+
+
+# Load fonts at startup
+VERDANA_REGULAR = load_font_base64("/app/fonts/Verdana.ttf")
+VERDANA_BOLD = load_font_base64("/app/fonts/Verdana-Bold.ttf")
+
+
 app = FastAPI(
     title="HTML to PDF & PDF to Word Converter",
     description="Convert HTML to PDF and PDF to Word with full CSS support using Chromium",
@@ -146,6 +163,13 @@ async def convert_html_to_pdf(request: ConversionRequest):
         
         logger.info(f"Starting conversion for: {safe_filename}")
         
+        # Inject base64 fonts in HTML
+        html_with_fonts = request.html.replace(
+            '{{VERDANA_REGULAR_BASE64}}', VERDANA_REGULAR
+        ).replace(
+            '{{VERDANA_BOLD_BASE64}}', VERDANA_BOLD
+        )
+        
         # Download YER header afbeelding en converteer naar base64
         header_image_base64 = await get_yer_header_base64()
         
@@ -172,7 +196,7 @@ async def convert_html_to_pdf(request: ConversionRequest):
                 
                 # HTML content laden met UTF-8 encoding
                 await page.set_content(
-                    request.html,
+                    html_with_fonts,
                     wait_until='networkidle',
                     timeout=30000
                 )
