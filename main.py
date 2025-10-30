@@ -12,6 +12,7 @@ import logging
 import httpx
 import tempfile
 import asyncio
+import shutil
 from typing import Optional
 
 # Logging configuratie
@@ -19,20 +20,34 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_font_base64(font_path: str) -> str:
-    """Load font file and return as base64 data URI"""
+def setup_fonts():
+    """Copy fonts to /tmp directory for Chromium access"""
     try:
-        with open(font_path, 'rb') as f:
-            font_data = base64.b64encode(f.read()).decode('utf-8')
-            return f"data:font/truetype;charset=utf-8;base64,{font_data}"
+        # Create temp fonts directory
+        temp_fonts_dir = Path("/tmp/fonts")
+        temp_fonts_dir.mkdir(exist_ok=True)
+        
+        # Copy fonts from /app/fonts to /tmp/fonts
+        source_fonts = [
+            ("/app/fonts/Verdana.ttf", "/tmp/fonts/Verdana.ttf"),
+            ("/app/fonts/Verdana-Bold.ttf", "/tmp/fonts/Verdana-Bold.ttf")
+        ]
+        
+        for source, dest in source_fonts:
+            if Path(source).exists():
+                shutil.copy2(source, dest)
+                logger.info(f"Copied font: {source} -> {dest}")
+            else:
+                logger.error(f"Font not found: {source}")
+        
+        return True
     except Exception as e:
-        logger.error(f"Failed to load font {font_path}: {e}")
-        return ""
+        logger.error(f"Failed to setup fonts: {e}")
+        return False
 
 
-# Load fonts at startup
-VERDANA_REGULAR = load_font_base64("/app/fonts/Verdana.ttf")
-VERDANA_BOLD = load_font_base64("/app/fonts/Verdana-Bold.ttf")
+# Setup fonts at startup
+setup_fonts()
 
 
 app = FastAPI(
@@ -163,27 +178,14 @@ async def convert_html_to_pdf(request: ConversionRequest):
         
         logger.info(f"Starting conversion for: {safe_filename}")
         
-        # DEBUG: Check of fonts geladen zijn
-        logger.info(f"DEBUG - VERDANA_REGULAR length: {len(VERDANA_REGULAR)}")
-        logger.info(f"DEBUG - VERDANA_BOLD length: {len(VERDANA_BOLD)}")
-        
-        # DEBUG: Check of placeholders in HTML zitten
-        has_regular = '__VERDANA_REGULAR_BASE64__' in request.html
-        has_bold = '__VERDANA_BOLD_BASE64__' in request.html
-        logger.info(f"DEBUG - HTML contains VERDANA_REGULAR placeholder: {has_regular}")
-        logger.info(f"DEBUG - HTML contains VERDANA_BOLD placeholder: {has_bold}")
-        logger.info(f"DEBUG - Incoming HTML length: {len(request.html)}")
-        
-        # Inject base64 fonts in HTML
+        # Inject font paths in HTML (use file:// URLs to /tmp/fonts)
         html_with_fonts = request.html.replace(
-            '__VERDANA_REGULAR_BASE64__', VERDANA_REGULAR
+            '__VERDANA_REGULAR_BASE64__', 'file:///tmp/fonts/Verdana.ttf'
         ).replace(
-            '__VERDANA_BOLD_BASE64__', VERDANA_BOLD
+            '__VERDANA_BOLD_BASE64__', 'file:///tmp/fonts/Verdana-Bold.ttf'
         )
         
-        # DEBUG: Check of replacement werkte
-        logger.info(f"DEBUG - After replacement HTML length: {len(html_with_fonts)}")
-        logger.info(f"DEBUG - Replacement successful: {len(html_with_fonts) > len(request.html)}")
+        logger.info(f"HTML prepared with font paths")
         
         # Download YER header afbeelding en converteer naar base64
         header_image_base64 = await get_yer_header_base64()
@@ -201,7 +203,8 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     '--no-first-run',
                     '--no-zygote',
                     '--single-process',
-                    '--disable-extensions'
+                    '--disable-extensions',
+                    '--font-render-hinting=none'
                 ]
             )
             
@@ -215,6 +218,9 @@ async def convert_html_to_pdf(request: ConversionRequest):
                     wait_until='networkidle',
                     timeout=30000
                 )
+                
+                # Wacht even zodat fonts kunnen laden
+                await page.wait_for_timeout(500)
                 
                 # PDF genereren met Playwright's native header/footer
                 # Dit zorgt ervoor dat Chromium exact weet waar content mag komen
