@@ -168,17 +168,17 @@ async def convert_html_to_pdf(request: ConversionRequest):
         logger.info(f"DEBUG - VERDANA_BOLD length: {len(VERDANA_BOLD)}")
         
         # DEBUG: Check of placeholders in HTML zitten
-        has_regular = '{{VERDANA_REGULAR_BASE64}}' in request.html
-        has_bold = '{{VERDANA_BOLD_BASE64}}' in request.html
+        has_regular = '__VERDANA_REGULAR_BASE64__' in request.html
+        has_bold = '__VERDANA_BOLD_BASE64__' in request.html
         logger.info(f"DEBUG - HTML contains VERDANA_REGULAR placeholder: {has_regular}")
         logger.info(f"DEBUG - HTML contains VERDANA_BOLD placeholder: {has_bold}")
         logger.info(f"DEBUG - Incoming HTML length: {len(request.html)}")
         
         # Inject base64 fonts in HTML
         html_with_fonts = request.html.replace(
-            '{{VERDANA_REGULAR_BASE64}}', VERDANA_REGULAR
+            '__VERDANA_REGULAR_BASE64__', VERDANA_REGULAR
         ).replace(
-            '{{VERDANA_BOLD_BASE64}}', VERDANA_BOLD
+            '__VERDANA_BOLD_BASE64__', VERDANA_BOLD
         )
         
         # DEBUG: Check of replacement werkte
